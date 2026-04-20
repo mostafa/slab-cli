@@ -1,0 +1,38 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/slab-core",
+    "crates/slab-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88.0"
+license = "MIT"
+repository = "https://github.com/mostafa/slab-cli"
+
+[workspace.dependencies]
+slab-core = { path = "crates/slab-core" }
+anyhow = "1"
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.13", features = ["json"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+clap = { version = "4", features = ["derive", "env"] }
+rusqlite = { version = "0.39", features = ["bundled"] }
+similar = "3"
+indicatif = "0.18"
+console = "0.16"
+pulldown-cmark = "0.13"
+sha2 = "0.11"
+dirs = "6"
+arboard = "3"
+slug = "0.1"
+toml = "1"
+opener = "0.8"
+clap_complete = "4"
