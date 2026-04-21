@@ -373,11 +373,7 @@ impl SlabClient {
         Ok(resp.create_comment)
     }
 
-    pub async fn update_comment(
-        &self,
-        comment_id: &str,
-        content: &str,
-    ) -> anyhow::Result<Comment> {
+    pub async fn update_comment(&self, comment_id: &str, content: &str) -> anyhow::Result<Comment> {
         #[derive(Deserialize)]
         #[serde(rename_all = "camelCase")]
         struct Resp {
@@ -400,11 +396,7 @@ impl SlabClient {
         Ok(resp.update_comment)
     }
 
-    pub async fn react_to_comment(
-        &self,
-        comment_id: &str,
-        emoji: &str,
-    ) -> anyhow::Result<String> {
+    pub async fn react_to_comment(&self, comment_id: &str, emoji: &str) -> anyhow::Result<String> {
         #[derive(Deserialize)]
         #[serde(rename_all = "camelCase")]
         struct Reaction {

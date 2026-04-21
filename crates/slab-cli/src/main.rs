@@ -325,9 +325,7 @@ fn run(ctx: cmd::Context, command: Command) -> anyhow::Result<()> {
             dry_run,
             force,
         } => rt.block_on(cmd::sync::push(&ctx, file.as_deref(), all, dry_run, force)),
-        Command::CommentList { post_id } => {
-            rt.block_on(cmd::comment::list(&ctx, &post_id))
-        }
+        Command::CommentList { post_id } => rt.block_on(cmd::comment::list(&ctx, &post_id)),
         Command::CommentAdd {
             post_id,
             body,

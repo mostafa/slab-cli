@@ -1,5 +1,5 @@
-use crate::output::{self, Format};
 use super::Context;
+use crate::output::{self, Format};
 use slab_core::delta::delta_to_markdown;
 
 pub async fn list(ctx: &Context, post_id: &str) -> anyhow::Result<()> {
@@ -7,10 +7,7 @@ pub async fn list(ctx: &Context, post_id: &str) -> anyhow::Result<()> {
     let post_threads = client.get_post_threads(post_id).await?;
 
     let threads = post_threads.threads.unwrap_or_default();
-    let comment_threads: Vec<_> = threads
-        .iter()
-        .filter(|t| t.comments.is_some())
-        .collect();
+    let comment_threads: Vec<_> = threads.iter().filter(|t| t.comments.is_some()).collect();
 
     let out = match ctx.format {
         Format::Json => serde_json::to_string_pretty(&comment_threads)?,
@@ -113,7 +110,10 @@ pub async fn add(
         )
         .await?;
 
-    println!("comment created: {} (thread: {})", result.id, effective_thread_id);
+    println!(
+        "comment created: {} (thread: {})",
+        result.id, effective_thread_id
+    );
     Ok(())
 }
 
