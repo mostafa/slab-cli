@@ -295,6 +295,192 @@ impl SlabClient {
         Ok(resp.sync_post)
     }
 
+    pub async fn get_post_threads(&self, post_id: &str) -> anyhow::Result<PostThreads> {
+        #[derive(Deserialize)]
+        struct Resp {
+            post: PostThreads,
+        }
+        let q = r#"
+            query PostCommentThreads($postId: ID!) {
+                post(id: $postId) {
+                    id
+                    threads {
+                        id
+                        ... on CommentThread {
+                            comments {
+                                id
+                                content
+                                author { id name avatarUrl }
+                                insertedAt
+                                updatedAt
+                            }
+                            resolvedAt
+                        }
+                    }
+                }
+            }
+        "#;
+        let vars = serde_json::json!({ "postId": post_id });
+        let resp: Resp = self.query(q, Some(vars)).await?;
+        Ok(resp.post)
+    }
+
+    pub async fn create_comment(
+        &self,
+        post_id: &str,
+        thread_id: &str,
+        content: &str,
+        version: i64,
+        checksum: i64,
+        mark: &serde_json::Value,
+    ) -> anyhow::Result<CreatedComment> {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Resp {
+            create_comment: CreatedComment,
+        }
+        let q = r#"
+            mutation CreateComment(
+                $threadId: ID!,
+                $id: ID!,
+                $version: Int!,
+                $checksum: Int!,
+                $mark: Json!,
+                $content: String!,
+                $notifyGroups: Boolean = false
+            ) {
+                createComment(
+                    threadId: $threadId,
+                    postId: $id,
+                    version: $version,
+                    checksum: $checksum,
+                    mark: $mark,
+                    content: $content,
+                    notifyGroups: $notifyGroups
+                ) { id }
+            }
+        "#;
+        let vars = serde_json::json!({
+            "threadId": thread_id,
+            "id": post_id,
+            "version": version,
+            "checksum": checksum,
+            "mark": mark,
+            "content": content,
+            "notifyGroups": true,
+        });
+        let resp: Resp = self.query(q, Some(vars)).await?;
+        Ok(resp.create_comment)
+    }
+
+    pub async fn update_comment(
+        &self,
+        comment_id: &str,
+        content: &str,
+    ) -> anyhow::Result<Comment> {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Resp {
+            update_comment: Comment,
+        }
+        let q = r#"
+            mutation UpdateComment($id: ID!, $content: String!) {
+                updateComment(commentId: $id, content: $content) {
+                    id
+                    content
+                    updatedAt
+                }
+            }
+        "#;
+        let vars = serde_json::json!({
+            "id": comment_id,
+            "content": content,
+        });
+        let resp: Resp = self.query(q, Some(vars)).await?;
+        Ok(resp.update_comment)
+    }
+
+    pub async fn react_to_comment(
+        &self,
+        comment_id: &str,
+        emoji: &str,
+    ) -> anyhow::Result<String> {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Reaction {
+            id: String,
+        }
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Resp {
+            comment_reaction: Reaction,
+        }
+        let q = r#"
+            mutation CreateCommentReaction($commentId: ID!, $emoji: String!) {
+                commentReaction: createCommentReaction(commentId: $commentId, emoji: $emoji) {
+                    id
+                }
+            }
+        "#;
+        let vars = serde_json::json!({
+            "commentId": comment_id,
+            "emoji": emoji,
+        });
+        let resp: Resp = self.query(q, Some(vars)).await?;
+        Ok(resp.comment_reaction.id)
+    }
+
+    pub async fn delete_comment(&self, comment_id: &str) -> anyhow::Result<String> {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Resp {
+            delete_comment: CreatedComment,
+        }
+        let q = r#"
+            mutation DeleteComment($id: ID!) {
+                deleteComment(commentId: $id) { id }
+            }
+        "#;
+        let vars = serde_json::json!({ "id": comment_id });
+        let resp: Resp = self.query(q, Some(vars)).await?;
+        Ok(resp.delete_comment.id)
+    }
+
+    pub async fn delete_thread(&self, thread_id: &str) -> anyhow::Result<String> {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Resp {
+            delete_thread: CreatedComment,
+        }
+        let q = r#"
+            mutation DeleteThread($id: ID!) {
+                deleteThread(threadId: $id) { id }
+            }
+        "#;
+        let vars = serde_json::json!({ "id": thread_id });
+        let resp: Resp = self.query(q, Some(vars)).await?;
+        Ok(resp.delete_thread.id)
+    }
+
+    pub async fn resolve_thread(&self, thread_id: &str) -> anyhow::Result<ResolvedThread> {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Resp {
+            resolve_thread: ResolvedThread,
+        }
+        let q = r#"
+            mutation ResolveThread($id: ID!) {
+                resolveThread(threadId: $id) {
+                    id
+                    resolvedAt
+                }
+            }
+        "#;
+        let vars = serde_json::json!({ "id": thread_id });
+        let resp: Resp = self.query(q, Some(vars)).await?;
+        Ok(resp.resolve_thread)
+    }
+
     pub async fn get_organization(&self) -> anyhow::Result<Organization> {
         #[derive(Deserialize)]
         struct Resp {

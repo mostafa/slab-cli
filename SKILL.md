@@ -2,9 +2,9 @@
 name: slab-cli
 description: >-
   Interact with Slab knowledge base via the slab CLI. Read, search, create,
-  update, and sync documentation posts and topics. Use when the user mentions
-  Slab, knowledge base, documentation workflow, writing or reviewing docs in
-  Slab, syncing posts, or managing a Slab vault.
+  update, and sync documentation posts, topics, and comments. Use when the user
+  mentions Slab, knowledge base, documentation workflow, writing or reviewing
+  docs in Slab, syncing posts, commenting, or managing a Slab vault.
 ---
 
 # slab CLI
@@ -86,6 +86,20 @@ slab push --force                    # overwrite remote on conflict
 slab post:create "Title" --topic TOPIC_ID --content-file doc.md
 echo "# New Post" | slab post:create "Title" --content-file -
 slab post:update POST_ID --content-file updated.md
+```
+
+### Comments
+
+```bash
+slab comment:list POST_ID            # list all comment threads
+slab comment:list POST_ID --json     # structured JSON output
+slab comment:add POST_ID "Fix the typo in line 3"
+slab comment:add POST_ID "Reply" --thread THREAD_ID  # reply to existing thread
+slab comment:update COMMENT_ID "Updated text"
+slab comment:delete COMMENT_ID
+slab comment:react COMMENT_ID "👍"    # react to a comment
+slab comment:resolve THREAD_ID       # resolve/close a thread
+slab thread:delete THREAD_ID         # delete an entire thread
 ```
 
 ### Links
@@ -178,6 +192,15 @@ cat <<'EOF' | slab post:create "Deployment Runbook" --topic TOPIC_ID --content-f
 ## Steps
 1. ...
 EOF
+```
+
+### Review comments on a post and respond
+
+```bash
+slab comment:list POST_ID --json
+# parse threads, identify unresolved ones
+slab comment:add POST_ID "Addressed in latest edit" --thread THREAD_ID
+slab comment:resolve THREAD_ID
 ```
 
 ## Key Conventions

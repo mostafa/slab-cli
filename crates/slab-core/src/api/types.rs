@@ -42,3 +42,49 @@ pub struct Organization {
     pub id: String,
     pub host: String,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommentThread {
+    pub id: String,
+    pub comments: Option<Vec<Comment>>,
+    #[serde(default)]
+    pub resolved_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Comment {
+    pub id: String,
+    pub content: Option<String>,
+    pub author: Option<CommentAuthor>,
+    pub inserted_at: Option<String>,
+    pub updated_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommentAuthor {
+    pub id: String,
+    pub name: Option<String>,
+    pub avatar_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PostThreads {
+    pub id: String,
+    pub threads: Option<Vec<CommentThread>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreatedComment {
+    pub id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResolvedThread {
+    pub id: String,
+    pub resolved_at: Option<String>,
+}

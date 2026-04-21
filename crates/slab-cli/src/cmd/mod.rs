@@ -1,4 +1,5 @@
 pub mod auth;
+pub mod comment;
 pub mod links;
 pub mod open;
 pub mod post;
@@ -7,6 +8,15 @@ pub mod sync;
 pub mod topic;
 pub mod tree;
 pub mod vault_cmd;
+
+pub fn timestamp_id() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    format!("{nanos:016x}")
+}
 
 use std::path::PathBuf;
 

@@ -10,6 +10,7 @@ Built for integration with AI coding agents (Claude, Cursor, etc.) to automate d
 - **Local vault**: pull your entire Slab workspace as markdown files with YAML frontmatter
 - **Sync**: git-like `pull` / `status` / `diff` / `push` workflow
 - **Delta ↔ Markdown**: automatic conversion between Slab's Quill Delta format and Markdown
+- **Comments & reactions**: list, add, update, delete, resolve threads, react with emoji
 - **Agent-friendly**: `--json` output, `--copy` to clipboard, env var config, stdin content pipes
 
 ## Install
@@ -61,6 +62,13 @@ slab push --all
 | `slab status` | Show modified/added/deleted files |
 | `slab diff [file]` | Show local changes |
 | `slab push [file\|--all]` | Push changes to Slab |
+| `slab comment:list <post-id>` | List comment threads on a post |
+| `slab comment:add <post-id> <text>` | Add a comment (new thread) |
+| `slab comment:update <comment-id> <text>` | Edit a comment |
+| `slab comment:delete <comment-id>` | Delete a comment |
+| `slab comment:react <comment-id> <emoji>` | React to a comment |
+| `slab comment:resolve <thread-id>` | Resolve a comment thread |
+| `slab thread:delete <thread-id>` | Delete an entire thread |
 | `slab links <file>` | Show outgoing links |
 | `slab backlinks <file>` | Show incoming links |
 | `slab open <id>` | Open post in browser |
@@ -123,6 +131,23 @@ slab search "deployment" --json
 
 # Agent creates a post from stdin
 echo "# New RFC\n\nContent here" | slab post:create "My RFC" --topic=eng --content-file=-
+```
+
+### Comments
+
+```bash
+# List comment threads on a post
+slab comment:list abc123
+
+# Add a comment to a post
+slab comment:add abc123 "Looks good, minor typo in section 3"
+
+# Reply to an existing thread
+slab comment:add abc123 "Fixed, thanks!" --thread plco0ho0
+
+# React, then resolve the thread
+slab comment:react k4vjdkoz "👍"
+slab comment:resolve plco0ho0
 ```
 
 ## Requirements

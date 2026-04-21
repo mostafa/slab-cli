@@ -160,6 +160,57 @@ enum Command {
         #[arg(long)]
         force: bool,
     },
+    /// List comments on a post
+    #[command(name = "comment:list")]
+    CommentList {
+        /// Post ID
+        post_id: String,
+    },
+    /// Add a comment to a post
+    #[command(name = "comment:add")]
+    CommentAdd {
+        /// Post ID
+        post_id: String,
+        /// Comment text
+        body: String,
+        /// Reply to an existing thread ID
+        #[arg(long)]
+        thread: Option<String>,
+    },
+    /// Update a comment
+    #[command(name = "comment:update")]
+    CommentUpdate {
+        /// Comment ID
+        comment_id: String,
+        /// New comment text
+        body: String,
+    },
+    /// Delete a comment
+    #[command(name = "comment:delete")]
+    CommentDelete {
+        /// Comment ID
+        comment_id: String,
+    },
+    /// Resolve a comment thread
+    #[command(name = "comment:resolve")]
+    CommentResolve {
+        /// Thread ID to resolve
+        thread_id: String,
+    },
+    /// React to a comment with an emoji
+    #[command(name = "comment:react")]
+    CommentReact {
+        /// Comment ID
+        comment_id: String,
+        /// Emoji to react with (e.g. "👍")
+        emoji: String,
+    },
+    /// Delete an entire comment thread
+    #[command(name = "thread:delete")]
+    ThreadDelete {
+        /// Thread ID to delete
+        thread_id: String,
+    },
     /// Find links in a post
     Links {
         /// File to inspect (local vault path)
@@ -274,6 +325,29 @@ fn run(ctx: cmd::Context, command: Command) -> anyhow::Result<()> {
             dry_run,
             force,
         } => rt.block_on(cmd::sync::push(&ctx, file.as_deref(), all, dry_run, force)),
+        Command::CommentList { post_id } => {
+            rt.block_on(cmd::comment::list(&ctx, &post_id))
+        }
+        Command::CommentAdd {
+            post_id,
+            body,
+            thread,
+        } => rt.block_on(cmd::comment::add(&ctx, &post_id, &body, thread.as_deref())),
+        Command::CommentUpdate { comment_id, body } => {
+            rt.block_on(cmd::comment::update(&ctx, &comment_id, &body))
+        }
+        Command::CommentDelete { comment_id } => {
+            rt.block_on(cmd::comment::delete(&ctx, &comment_id))
+        }
+        Command::CommentResolve { thread_id } => {
+            rt.block_on(cmd::comment::resolve(&ctx, &thread_id))
+        }
+        Command::CommentReact { comment_id, emoji } => {
+            rt.block_on(cmd::comment::react(&ctx, &comment_id, &emoji))
+        }
+        Command::ThreadDelete { thread_id } => {
+            rt.block_on(cmd::comment::delete_thread(&ctx, &thread_id))
+        }
         Command::Links { file } => cmd::links::links(&ctx, file.as_deref()),
         Command::Backlinks { file } => cmd::links::backlinks(&ctx, file.as_deref()),
         Command::Open { id } => cmd::open::run(&ctx, &id),
