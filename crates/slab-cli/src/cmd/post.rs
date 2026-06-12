@@ -18,9 +18,10 @@ pub async fn get(ctx: &Context, id: &str, raw: bool) -> anyhow::Result<()> {
     let out = match ctx.format {
         Format::Json => serde_json::to_string_pretty(&post)?,
         _ => {
-            let md = match &post.content {
-                Some(content) => slab_core::delta::delta_to_markdown(content),
-                None => String::new(),
+            let md = match (&post.markdown, &post.content) {
+                (Some(md), _) => md.clone(),
+                (None, Some(content)) => slab_core::delta::delta_to_markdown(content),
+                (None, None) => String::new(),
             };
             format!(
                 "# {}\n\nID: {} | Updated: {}\n\n{}",

@@ -5,7 +5,9 @@ use similar::{ChangeTag, TextDiff};
 use super::Context;
 use crate::output::{self, Format};
 use slab_core::delta::{delta_to_markdown, markdown_to_delta};
-use slab_core::vault::{FileStatus, hash_content, parse_frontmatter_slab_id, strip_frontmatter};
+use slab_core::vault::{
+    FileStatus, TopicPaths, hash_content, parse_frontmatter_slab_id, strip_frontmatter,
+};
 
 pub async fn pull(
     ctx: &Context,
@@ -22,9 +24,13 @@ pub async fn pull(
     }
     let vault = slab_core::vault::Vault::open(cfg)?;
 
+    // Topic hierarchy for nested vault directories.
+    let topics = client.list_topics().await?;
+    let topic_paths = TopicPaths::build(&topics);
+
     if let Some(id) = post_id {
         let post = client.get_post(id).await?;
-        let path = vault.write_post(&post)?;
+        let path = vault.write_post(&post, Some(&topic_paths))?;
         println!("pulled: {}", path.display());
         return Ok(());
     }
@@ -33,7 +39,7 @@ pub async fn pull(
         let posts = client.get_topic_posts(topic_id).await?;
         let pb = progress_bar(posts.len() as u64);
         for post in &posts {
-            let path = vault.write_post(post)?;
+            let path = vault.write_post(post, Some(&topic_paths))?;
             pb.set_message(format!("{}", path.display()));
             pb.inc(1);
         }
@@ -57,7 +63,7 @@ pub async fn pull(
                 break;
             }
             for post in &posts {
-                let path = vault.write_post(post)?;
+                let path = vault.write_post(post, Some(&topic_paths))?;
                 total += 1;
                 pb.set_message(format!("[{total}] {}", path.display()));
             }
@@ -223,11 +229,13 @@ pub async fn push(
                 if !force {
                     // Check for remote drift
                     let remote_post = client.get_post(&state.slab_id).await?;
-                    let remote_md = remote_post
-                        .content
-                        .as_ref()
-                        .map(delta_to_markdown)
-                        .unwrap_or_default();
+                    let remote_md = remote_post.markdown.clone().unwrap_or_else(|| {
+                        remote_post
+                            .content
+                            .as_ref()
+                            .map(delta_to_markdown)
+                            .unwrap_or_default()
+                    });
                     let remote_hash = hash_content(&remote_md);
                     let our_remote_hash = &state.remote_content_hash;
 
@@ -250,8 +258,8 @@ pub async fn push(
                 let updated = client.update_post_content(&state.slab_id, &delta).await?;
                 println!("pushed: {path} -> {}", updated.id);
 
-                // Refresh local state
-                vault.write_post(&updated)?;
+                // Refresh local state (keeps the file at its current path)
+                vault.write_post(&updated, None)?;
             }
             FileStatus::Added => {
                 let content = std::fs::read_to_string(&abs_path)?;
@@ -267,7 +275,7 @@ pub async fn push(
                     }
                     let updated = client.update_post_content(&id, &delta).await?;
                     println!("pushed: {path} -> {}", updated.id);
-                    vault.write_post(&updated)?;
+                    vault.write_post(&updated, None)?;
                 } else {
                     // New post
                     let title = std::path::Path::new(path)
@@ -281,7 +289,7 @@ pub async fn push(
                     }
                     let created = client.create_post(&title, &delta, None).await?;
                     println!("created: {path} -> {}", created.id);
-                    vault.write_post(&created)?;
+                    vault.write_post(&created, None)?;
                 }
             }
             _ => {}

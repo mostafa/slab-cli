@@ -1,12 +1,49 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 use sha2::{Digest, Sha256};
 use tracing::info;
 
-use crate::api::types::Post;
+use crate::api::types::{Post, Topic};
 use crate::config::Config;
 use crate::delta::delta_to_markdown;
 use crate::store::{PostState, StateDb};
+
+/// Maps topic IDs to nested directory paths mirroring the topic hierarchy
+/// (e.g. "Tiger Handbook/Onboarding" instead of just "Onboarding").
+pub struct TopicPaths {
+    dirs: HashMap<String, String>,
+}
+
+impl TopicPaths {
+    pub fn build(topics: &[Topic]) -> Self {
+        let by_id: HashMap<&str, &Topic> = topics.iter().map(|t| (t.id.as_str(), t)).collect();
+        let mut dirs = HashMap::new();
+        for t in topics {
+            let mut segments = vec![sanitize_filename(&t.name)];
+            let mut cur = t.parent_topic_id.as_deref();
+            let mut depth = 0;
+            while let Some(parent_id) = cur {
+                depth += 1;
+                if depth > 16 {
+                    break; // cycle guard
+                }
+                let Some(parent) = by_id.get(parent_id) else {
+                    break;
+                };
+                segments.push(sanitize_filename(&parent.name));
+                cur = parent.parent_topic_id.as_deref();
+            }
+            segments.reverse();
+            dirs.insert(t.id.clone(), segments.join("/"));
+        }
+        Self { dirs }
+    }
+
+    pub fn dir(&self, topic_id: &str) -> Option<&str> {
+        self.dirs.get(topic_id).map(|s| s.as_str())
+    }
+}
 
 pub struct Vault {
     pub config: Config,
@@ -57,24 +94,60 @@ impl Vault {
     }
 
     /// Write a post to the vault filesystem and update state db.
-    pub fn write_post(&self, post: &Post) -> anyhow::Result<PathBuf> {
-        let md_content = match &post.content {
-            Some(content) => delta_to_markdown(content),
-            None => String::new(),
+    ///
+    /// With `topic_paths`, the file is placed in a nested directory mirroring
+    /// the topic hierarchy (and moved there if previously elsewhere). Without
+    /// it, an already-tracked post keeps its current location.
+    pub fn write_post(
+        &self,
+        post: &Post,
+        topic_paths: Option<&TopicPaths>,
+    ) -> anyhow::Result<PathBuf> {
+        // Prefer the server-rendered markdown; fall back to local conversion.
+        let md_content = match (&post.markdown, &post.content) {
+            (Some(md), _) => md.clone(),
+            (None, Some(content)) => delta_to_markdown(content),
+            (None, None) => String::new(),
         };
 
-        let topic_name = post
-            .topics
-            .as_ref()
-            .and_then(|t| t.first())
-            .map(|t| sanitize_filename(&t.name))
-            .unwrap_or_else(|| "Uncategorized".to_string());
+        let existing = self.db.get_by_id(&post.id)?;
 
-        let filename = sanitize_filename(&post.title);
-        let rel_dir = PathBuf::from("Topics").join(&topic_name);
-        let rel_path = rel_dir.join(format!("{filename}.md"));
+        let rel_path = match (&existing, topic_paths) {
+            // No hierarchy info: keep tracked posts where they are.
+            (Some(state), None) => PathBuf::from(&state.path),
+            _ => {
+                let topic_dir = post
+                    .topics
+                    .as_ref()
+                    .and_then(|t| t.first())
+                    .map(|t| {
+                        topic_paths
+                            .and_then(|tp| tp.dir(&t.id))
+                            .map(str::to_string)
+                            .unwrap_or_else(|| sanitize_filename(&t.name))
+                    })
+                    .unwrap_or_else(|| "Uncategorized".to_string());
+                let filename = sanitize_filename(&post.title);
+                PathBuf::from("Topics")
+                    .join(topic_dir)
+                    .join(format!("{filename}.md"))
+            }
+        };
 
-        let abs_dir = self.config.vault_path.join(&rel_dir);
+        // Remove the old file if the post moved to a new location.
+        if let Some(state) = &existing
+            && state.path != rel_path.to_string_lossy()
+        {
+            let old_abs = self.config.vault_path.join(&state.path);
+            if old_abs.exists() {
+                let _ = std::fs::remove_file(&old_abs);
+            }
+        }
+
+        let abs_dir = self
+            .config
+            .vault_path
+            .join(rel_path.parent().unwrap_or(&rel_path));
         std::fs::create_dir_all(&abs_dir)?;
 
         let topics_list: Vec<String> = post

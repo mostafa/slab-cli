@@ -22,7 +22,7 @@ pub async fn list(ctx: &Context) -> anyhow::Result<()> {
         _ => {
             let mut s = String::new();
             for t in &topics {
-                let desc = t.description.as_deref().unwrap_or("");
+                let desc = summarize(t.description.as_deref().unwrap_or(""));
                 if desc.is_empty() {
                     s.push_str(&format!("  {} — {}\n", t.id, t.name));
                 } else {
@@ -59,6 +59,18 @@ pub async fn get(ctx: &Context, id: &str) -> anyhow::Result<()> {
     };
     output::emit(&out, ctx.copy);
     Ok(())
+}
+
+/// First non-empty line, capped at 80 chars, for one-line list display.
+fn summarize(text: &str) -> String {
+    let line = text.lines().find(|l| !l.trim().is_empty()).unwrap_or("");
+    let line = line.trim();
+    if line.chars().count() > 80 {
+        let truncated: String = line.chars().take(77).collect();
+        format!("{truncated}...")
+    } else {
+        line.to_string()
+    }
 }
 
 pub async fn posts(ctx: &Context, id: &str) -> anyhow::Result<()> {
