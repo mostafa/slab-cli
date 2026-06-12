@@ -395,15 +395,33 @@ impl SlabClient {
         struct Resp {
             list_posts: Edges<WebPost>,
         }
-        let q = format!(
-            r#"query ListPosts($topicId: ID, $cursor: String) {{
-                listPosts(first: 50, after: $cursor, topicId: $topicId) {{
-                    edges {{ node {{ {POST_FIELDS} }} }}
-                    pageInfo {{ endCursor hasNextPage }}
-                }}
-            }}"#
-        );
-        let vars = serde_json::json!({ "topicId": topic_id, "cursor": cursor });
+        // An explicit `topicId: null` means "posts without any topic", so the
+        // argument must be omitted entirely to list the whole workspace.
+        let (q, vars) = if let Some(topic) = topic_id {
+            (
+                format!(
+                    r#"query ListPosts($topicId: ID, $cursor: String) {{
+                        listPosts(first: 50, after: $cursor, topicId: $topicId) {{
+                            edges {{ node {{ {POST_FIELDS} }} }}
+                            pageInfo {{ endCursor hasNextPage }}
+                        }}
+                    }}"#
+                ),
+                serde_json::json!({ "topicId": topic, "cursor": cursor }),
+            )
+        } else {
+            (
+                format!(
+                    r#"query ListPosts($cursor: String) {{
+                        listPosts(first: 50, after: $cursor) {{
+                            edges {{ node {{ {POST_FIELDS} }} }}
+                            pageInfo {{ endCursor hasNextPage }}
+                        }}
+                    }}"#
+                ),
+                serde_json::json!({ "cursor": cursor }),
+            )
+        };
         let resp: Resp = self.query(&q, Some(vars)).await?;
         let posts: Vec<Post> = resp
             .list_posts
