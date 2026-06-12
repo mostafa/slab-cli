@@ -37,12 +37,11 @@ impl Config {
             .with_context(|| format!("reading {}", config_path.display()))?;
         let cfg: ConfigFile = toml::de::from_str(&text)
             .with_context(|| format!("parsing {}", config_path.display()))?;
+        let endpoint = cfg.endpoint.unwrap_or_else(|| default_endpoint(&cfg.team));
         Ok(Self {
             team: cfg.team,
             token: cfg.token,
-            endpoint: cfg
-                .endpoint
-                .unwrap_or_else(|| "https://api.slab.com/v1/graphql".into()),
+            endpoint,
             vault_path: vault_path.to_path_buf(),
         })
     }
@@ -62,11 +61,11 @@ impl Config {
         let vault_path = vault
             .or_else(|| std::env::var("SLAB_VAULT").ok().map(PathBuf::from))
             .unwrap_or_else(|| default_vault_root().join(&team));
+        let endpoint = std::env::var("SLAB_ENDPOINT").unwrap_or_else(|_| default_endpoint(&team));
         Ok(Self {
             team,
             token,
-            endpoint: std::env::var("SLAB_ENDPOINT")
-                .unwrap_or_else(|_| "https://api.slab.com/v1/graphql".into()),
+            endpoint,
             vault_path,
         })
     }
@@ -101,6 +100,29 @@ impl Config {
                 }
                 return Ok(cfg);
             }
+        } else {
+            // No team given — auto-discover vaults under ~/.slab/.
+            let vaults = discover_vaults();
+            match vaults.as_slice() {
+                [single] => {
+                    let mut cfg = Self::load_from_vault(single)?;
+                    if let Some(tk) = token {
+                        cfg.token = tk;
+                    }
+                    return Ok(cfg);
+                }
+                [] => {}
+                many => {
+                    let teams: Vec<_> = many
+                        .iter()
+                        .filter_map(|p| p.file_name().and_then(|n| n.to_str()))
+                        .collect();
+                    bail!(
+                        "multiple vaults found ({}); specify --team or set SLAB_TEAM",
+                        teams.join(", ")
+                    );
+                }
+            }
         }
 
         Self::from_env(team, token, vault)
@@ -131,4 +153,32 @@ pub fn default_vault_root() -> PathBuf {
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join(".slab")
+}
+
+/// Team-specific endpoint that works with session tokens on any Slab plan.
+/// Override with SLAB_ENDPOINT env var or `endpoint` in config.toml.
+pub fn default_endpoint(team: &str) -> String {
+    format!("https://{team}.slab.com/graphql")
+}
+
+/// Team name from the single discovered vault, if exactly one exists.
+pub fn default_team() -> Option<String> {
+    match discover_vaults().as_slice() {
+        [single] => Config::load_from_vault(single).ok().map(|c| c.team),
+        _ => None,
+    }
+}
+
+/// Find all vault directories under `~/.slab/` that contain a config file.
+fn discover_vaults() -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(default_vault_root()) else {
+        return Vec::new();
+    };
+    let mut vaults: Vec<PathBuf> = entries
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.join(".slab").join("config.toml").exists())
+        .collect();
+    vaults.sort();
+    vaults
 }
