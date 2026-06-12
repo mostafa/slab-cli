@@ -68,11 +68,6 @@ pub async fn add(
 ) -> anyhow::Result<()> {
     let client = ctx.client()?;
 
-    // Fetch post to get the content version and OT checksum
-    let post = client.get_post(post_id).await?;
-    let version = post.version.unwrap_or(1);
-    let checksum = post.checksum();
-
     let delta_content = format!(
         "[{{\"insert\":\"{}\\n\"}}]",
         body.replace('\\', "\\\\")
@@ -80,22 +75,29 @@ pub async fn add(
             .replace('\n', "\\n")
     );
 
-    // Use provided thread ID or generate a new one
-    let effective_thread_id = thread_id
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| format!("slab-cli-{}", crate::cmd::timestamp_id()));
+    // Replying to an existing thread uses a simpler mutation.
+    if let Some(tid) = thread_id {
+        let comment_id = client.add_comment(tid, &delta_content).await?;
+        println!("comment created: {comment_id} (thread: {tid})");
+        return Ok(());
+    }
 
-    // Default mark: comment at the beginning of the document
+    // New threads need the post's content version and OT checksum.
+    let post = client.get_post(post_id).await?;
+    let version = post.version.unwrap_or(1);
+    let checksum = post.checksum();
+
+    // Default mark: anchor the thread at the beginning of the document
     let mark = serde_json::json!({
         "type": "plain",
         "index": 0,
         "length": 1
     });
 
-    let result = client
+    let (tid, comment_id) = client
         .create_comment(
             post_id,
-            &effective_thread_id,
+            &short_id(),
             &delta_content,
             version,
             checksum,
@@ -103,10 +105,7 @@ pub async fn add(
         )
         .await?;
 
-    println!(
-        "comment created: {} (thread: {})",
-        result.id, effective_thread_id
-    );
+    println!("comment created: {comment_id} (thread: {tid})");
     Ok(())
 }
 
@@ -153,6 +152,23 @@ pub async fn resolve(ctx: &Context, thread_id: &str) -> anyhow::Result<()> {
         result.resolved_at.as_deref().unwrap_or("now")
     );
     Ok(())
+}
+
+/// Slab thread IDs are short lowercase base36 strings generated client-side.
+fn short_id() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let mut n = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    const CHARS: &[u8] = b"0123456789abcdefghijklmnopqrstuvwxyz";
+    (0..8)
+        .map(|_| {
+            let c = CHARS[(n % 36) as usize] as char;
+            n /= 36;
+            c
+        })
+        .collect()
 }
 
 /// Parse comment content from Quill Delta JSON string to plain text.
