@@ -72,6 +72,7 @@ slab push --all
 | `slab links <file>` | Show outgoing links |
 | `slab backlinks <file>` | Show incoming links |
 | `slab open <id>` | Open post in browser |
+| `slab api <query>` | Run a raw GraphQL query |
 | `slab completions <shell>` | Generate shell completions |
 
 ## Global options
@@ -150,11 +151,21 @@ slab comment:react k4vjdkoz "👍"
 slab comment:resolve plco0ho0
 ```
 
+## Endpoints & tokens
+
+By default the CLI talks to your team's web GraphQL endpoint
+(`https://<team>.slab.com/graphql`), which accepts a web session token and
+works on any Slab plan. To use the public API instead (Business/Enterprise
+plans, token from Team Settings → Developer), set:
+
+```bash
+export SLAB_ENDPOINT="https://api.slab.com/v1/graphql"
+```
+
 ## Requirements
 
 - Rust 1.88+
-- Slab Business or Enterprise plan (API access)
-- API token from Slab Team Settings → Developer
+- A Slab session token (any plan) or a developer API token (Business/Enterprise)
 
 ## License
 

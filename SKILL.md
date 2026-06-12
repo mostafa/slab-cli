@@ -115,6 +115,7 @@ slab backlinks Topics/Eng/my-rfc.md # incoming links
 slab tree                            # show vault directory tree
 slab open POST_ID                    # open in browser
 slab completions bash                # shell completions
+slab api 'QUERY' [--variables JSON]  # raw GraphQL escape hatch (use - for stdin)
 ```
 
 ## Global Flags

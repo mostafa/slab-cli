@@ -231,6 +231,14 @@ enum Command {
         /// Shell to generate completions for
         shell: clap_complete::Shell,
     },
+    /// Run a raw GraphQL query (use - to read from stdin)
+    Api {
+        /// GraphQL query text
+        query: String,
+        /// Variables as a JSON object
+        #[arg(long)]
+        variables: Option<String>,
+    },
 }
 
 fn main() {
@@ -357,6 +365,9 @@ fn run(ctx: cmd::Context, command: Command) -> anyhow::Result<()> {
                 &mut std::io::stdout(),
             );
             Ok(())
+        }
+        Command::Api { query, variables } => {
+            rt.block_on(cmd::api::run(&ctx, &query, variables.as_deref()))
         }
     }
 }
