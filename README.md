@@ -22,12 +22,11 @@ cargo install --path crates/slab-cli
 ## Quick start
 
 ```bash
-# 1. Authenticate
+# 1. Authenticate (saves config to ~/.slab/<team>/)
 export SLAB_API_TOKEN="your-token-here"
 slab auth login --team acme
 
-# 2. Initialize local vault & pull all posts
-slab vault init --team acme
+# 2. Pull all posts into the local vault
 slab pull --all
 
 # 3. Browse locally
@@ -89,6 +88,9 @@ slab push --all
 
 ## Vault layout
 
+Directories mirror the Slab topic hierarchy. Posts without a topic land in
+`Topics/Uncategorized/`; same-titled posts get an id suffix to avoid collisions.
+
 ```
 ~/.slab/<team>/
   .slab/
@@ -98,7 +100,11 @@ slab push --all
     Engineering/
       atlas-rfc.md
     Handbook/
-      onboarding.md
+      Policies and Guidelines/
+        Leaves/
+          parental-leave-policy.md
+    Uncategorized/
+      scratch-note.md
   Inbox/                    # local drafts (not yet pushed)
 ```
 

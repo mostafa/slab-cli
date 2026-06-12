@@ -134,10 +134,11 @@ slab api 'QUERY' [--variables JSON]  # raw GraphQL escape hatch (use - for stdin
 
 ```
 ~/.slab/<team>/
-  .slab/config.toml                  # auth + endpoint config
-  .slab/state.db                     # sync state (sqlite)
-  Topics/<TopicName>/<post-title>.md # pulled posts
-  Inbox/                             # local drafts (no slab_id)
+  .slab/config.toml                    # auth + endpoint config
+  .slab/state.db                       # sync state (sqlite)
+  Topics/<Topic>/<Subtopic>/<title>.md # pulled posts, nested by topic hierarchy
+  Topics/Uncategorized/<title>.md      # posts without a topic
+  Inbox/                               # local drafts (no slab_id)
 ```
 
 Each post file has YAML frontmatter:
