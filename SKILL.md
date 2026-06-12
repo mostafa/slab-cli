@@ -99,7 +99,8 @@ slab comment:update COMMENT_ID "Updated text"
 slab comment:delete COMMENT_ID
 slab comment:react COMMENT_ID "👍"    # react to a comment
 slab comment:resolve THREAD_ID       # resolve/close a thread
-slab thread:delete THREAD_ID         # delete an entire thread
+slab comment:unresolve THREAD_ID     # reopen a resolved thread
+slab thread:delete THREAD_ID         # delete a thread (must be unresolved)
 ```
 
 ### Links

@@ -154,6 +154,13 @@ pub async fn resolve(ctx: &Context, thread_id: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+pub async fn unresolve(ctx: &Context, thread_id: &str) -> anyhow::Result<()> {
+    let client = ctx.client()?;
+    let id = client.unresolve_thread(thread_id).await?;
+    println!("thread {} unresolved", id);
+    Ok(())
+}
+
 /// Slab thread IDs are short lowercase base36 strings generated client-side.
 fn short_id() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};

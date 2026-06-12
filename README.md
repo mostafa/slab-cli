@@ -68,7 +68,8 @@ slab push --all
 | `slab comment:delete <comment-id>` | Delete a comment |
 | `slab comment:react <comment-id> <emoji>` | React to a comment |
 | `slab comment:resolve <thread-id>` | Resolve a comment thread |
-| `slab thread:delete <thread-id>` | Delete an entire thread |
+| `slab comment:unresolve <thread-id>` | Reopen a resolved thread |
+| `slab thread:delete <thread-id>` | Delete a thread (must be unresolved) |
 | `slab links <file>` | Show outgoing links |
 | `slab backlinks <file>` | Show incoming links |
 | `slab open <id>` | Open post in browser |

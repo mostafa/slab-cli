@@ -197,6 +197,12 @@ enum Command {
         /// Thread ID to resolve
         thread_id: String,
     },
+    /// Reopen a resolved comment thread
+    #[command(name = "comment:unresolve")]
+    CommentUnresolve {
+        /// Thread ID to unresolve
+        thread_id: String,
+    },
     /// React to a comment with an emoji
     #[command(name = "comment:react")]
     CommentReact {
@@ -347,6 +353,9 @@ fn run(ctx: cmd::Context, command: Command) -> anyhow::Result<()> {
         }
         Command::CommentResolve { thread_id } => {
             rt.block_on(cmd::comment::resolve(&ctx, &thread_id))
+        }
+        Command::CommentUnresolve { thread_id } => {
+            rt.block_on(cmd::comment::unresolve(&ctx, &thread_id))
         }
         Command::CommentReact { comment_id, emoji } => {
             rt.block_on(cmd::comment::react(&ctx, &comment_id, &emoji))

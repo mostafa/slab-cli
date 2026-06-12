@@ -780,6 +780,22 @@ impl SlabClient {
         Ok(resp.resolve_thread)
     }
 
+    pub async fn unresolve_thread(&self, thread_id: &str) -> anyhow::Result<String> {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Resp {
+            unresolve_thread: CreatedComment,
+        }
+        let q = r#"
+            mutation UnresolveThread($id: ID!) {
+                unresolveThread(threadId: $id) { id }
+            }
+        "#;
+        let vars = serde_json::json!({ "id": thread_id });
+        let resp: Resp = self.query(q, Some(vars)).await?;
+        Ok(resp.unresolve_thread.id)
+    }
+
     pub async fn get_organization(&self) -> anyhow::Result<Organization> {
         #[derive(Deserialize)]
         struct Resp {
