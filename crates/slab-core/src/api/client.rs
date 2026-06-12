@@ -6,10 +6,117 @@ use tracing::debug;
 use crate::Config;
 use crate::api::types::*;
 
+/// Post fields selected in every query (web endpoint schema).
+const POST_FIELDS: &str = "id title insertedAt editedAt \
+     content { delta markdown text version } topics { id name }";
+
+/// Raw post shape returned by the team web endpoint.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WebPost {
+    id: String,
+    title: String,
+    content: Option<WebContent>,
+    inserted_at: Option<String>,
+    edited_at: Option<String>,
+    topics: Option<Vec<TopicRef>>,
+}
+
+#[derive(Deserialize)]
+struct WebContent {
+    delta: Option<serde_json::Value>,
+    markdown: Option<String>,
+    text: Option<String>,
+    version: Option<i64>,
+}
+
+impl From<WebPost> for Post {
+    fn from(p: WebPost) -> Self {
+        let (delta, markdown, text, version) = match p.content {
+            Some(c) => (c.delta, c.markdown, c.text, c.version),
+            None => (None, None, None, None),
+        };
+        Post {
+            id: p.id,
+            title: p.title,
+            content: delta,
+            markdown,
+            text,
+            inserted_at: p.inserted_at,
+            updated_at: p.edited_at,
+            version,
+            topics: p.topics,
+        }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WebTopic {
+    id: String,
+    name: String,
+    description: Option<serde_json::Value>,
+    parent: Option<IdRef>,
+}
+
+#[derive(Deserialize)]
+struct IdRef {
+    id: String,
+}
+
+impl From<WebTopic> for Topic {
+    fn from(t: WebTopic) -> Self {
+        Topic {
+            id: t.id,
+            name: t.name,
+            description: t.description.as_ref().map(json_to_text),
+            parent_topic_id: t.parent.map(|p| p.id),
+            posts: None,
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct Edges<N> {
+    edges: Vec<Edge<N>>,
+    #[serde(rename = "pageInfo")]
+    page_info: PageInfo,
+}
+
+#[derive(Deserialize)]
+struct Edge<N> {
+    node: N,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PageInfo {
+    end_cursor: Option<String>,
+    has_next_page: bool,
+}
+
+/// Flatten a Json value (Quill Delta or plain string) into readable text.
+/// Json scalars often arrive as strings containing serialized Delta ops.
+fn json_to_text(v: &serde_json::Value) -> String {
+    match v {
+        serde_json::Value::String(s) => match serde_json::from_str::<serde_json::Value>(s) {
+            Ok(inner) if inner.is_array() || inner.is_object() => json_to_text(&inner),
+            _ => s.clone(),
+        },
+        serde_json::Value::Array(_) => {
+            let wrapped = serde_json::json!({ "ops": v });
+            crate::delta::delta_to_markdown(&wrapped).trim().to_string()
+        }
+        serde_json::Value::Object(_) => crate::delta::delta_to_markdown(v).trim().to_string(),
+        _ => String::new(),
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct SlabClient {
     http: reqwest::Client,
     endpoint: String,
+    team: String,
 }
 
 #[derive(Serialize)]
@@ -47,7 +154,32 @@ impl SlabClient {
         Ok(Self {
             http,
             endpoint: config.endpoint.clone(),
+            team: config.team.clone(),
         })
+    }
+
+    /// True when talking to the public API (`api.slab.com`), which has a
+    /// slightly different schema than the team-specific web endpoint.
+    fn is_public_api(&self) -> bool {
+        self.endpoint.contains("api.slab.com")
+    }
+
+    /// Execute a raw GraphQL query and return the full response body
+    /// (including any errors) as JSON.
+    pub async fn raw_query(
+        &self,
+        query: &str,
+        variables: Option<serde_json::Value>,
+    ) -> anyhow::Result<serde_json::Value> {
+        let body = GqlRequest { query, variables };
+        let resp = self
+            .http
+            .post(&self.endpoint)
+            .json(&body)
+            .send()
+            .await?
+            .error_for_status()?;
+        Ok(resp.json().await?)
     }
 
     async fn query<T: for<'de> Deserialize<'de>>(
@@ -77,73 +209,191 @@ impl SlabClient {
     pub async fn get_post(&self, id: &str) -> anyhow::Result<Post> {
         #[derive(Deserialize)]
         struct Resp {
-            post: Post,
+            post: WebPost,
         }
-        let q = r#"
-            query GetPost($id: ID!) {
-                post(id: $id) {
-                    id
-                    title
-                    content
-                    insertedAt
-                    updatedAt
-                    version
-                    topics { id name }
-                }
-            }
-        "#;
+        let q = format!(r#"query GetPost($id: ID!) {{ post(id: $id) {{ {POST_FIELDS} }} }}"#);
         let vars = serde_json::json!({ "id": id });
-        let resp: Resp = self.query(q, Some(vars)).await?;
-        Ok(resp.post)
+        let resp: Resp = self.query(&q, Some(vars)).await?;
+        Ok(resp.post.into())
     }
 
+    /// Fetch the full topic tree. `listTopics` only returns one level
+    /// (roots when `parentId` is omitted), so we BFS the hierarchy,
+    /// batching each level's children into a single aliased query.
     pub async fn list_topics(&self) -> anyhow::Result<Vec<Topic>> {
-        #[derive(Deserialize)]
-        struct Resp {
-            topics: Vec<Topic>,
-        }
-        let q = r#"
-            query ListTopics {
-                topics {
-                    id
-                    name
-                    description
-                    parentTopicId
-                }
+        let roots = self.list_topics_level(None).await?;
+        let mut frontier: Vec<String> = roots.iter().map(|t| t.id.clone()).collect();
+        let mut all = roots;
+
+        while !frontier.is_empty() {
+            let mut found = Vec::new();
+            // Server caps query complexity at 200; ~16 per aliased lookup.
+            for chunk in frontier.chunks(10) {
+                found.extend(self.topics_children_batch(chunk).await?);
             }
-        "#;
-        let resp: Resp = self.query(q, None).await?;
-        Ok(resp.topics)
+            frontier = found.iter().map(|t| t.id.clone()).collect();
+            all.extend(found);
+        }
+        Ok(all)
     }
 
-    pub async fn get_topic_posts(&self, topic_id: &str) -> anyhow::Result<Vec<Post>> {
+    /// Fetch all topics of one level (children of `parent`, or roots).
+    async fn list_topics_level(&self, parent: Option<&str>) -> anyhow::Result<Vec<Topic>> {
         #[derive(Deserialize)]
         #[serde(rename_all = "camelCase")]
         struct Resp {
-            topic: TopicWithPosts,
-        }
-        #[derive(Deserialize)]
-        struct TopicWithPosts {
-            posts: Vec<Post>,
+            list_topics: Edges<WebTopic>,
         }
         let q = r#"
-            query GetTopicPosts($id: ID!) {
-                topic(id: $id) {
-                    posts {
-                        id
-                        title
-                        content
-                        insertedAt
-                        updatedAt
-                        version
-                        topics { id name }
+            query ListTopics($parentId: ID, $cursor: String) {
+                listTopics(first: 100, parentId: $parentId, after: $cursor) {
+                    edges {
+                        node { id name description parent { id } }
                     }
+                    pageInfo { endCursor hasNextPage }
                 }
             }
         "#;
-        let vars = serde_json::json!({ "id": topic_id });
-        let resp: Resp = self.query(q, Some(vars)).await?;
-        Ok(resp.topic.posts)
+        let mut topics = Vec::new();
+        let mut cursor: Option<String> = None;
+        loop {
+            let vars = serde_json::json!({ "parentId": parent, "cursor": cursor });
+            let resp: Resp = self.query(q, Some(vars)).await?;
+            topics.extend(resp.list_topics.edges.into_iter().map(|e| e.node.into()));
+            if !resp.list_topics.page_info.has_next_page {
+                break;
+            }
+            cursor = resp.list_topics.page_info.end_cursor;
+        }
+        Ok(topics)
+    }
+
+    /// Fetch the children of several parent topics in one aliased query.
+    async fn topics_children_batch(&self, parents: &[String]) -> anyhow::Result<Vec<Topic>> {
+        let mut q = String::from("query(");
+        for i in 0..parents.len() {
+            if i > 0 {
+                q.push_str(", ");
+            }
+            q.push_str(&format!("$p{i}: ID"));
+        }
+        q.push_str(") {");
+        for i in 0..parents.len() {
+            q.push_str(&format!(
+                " t{i}: listTopics(first: 100, parentId: $p{i}) {{ \
+                   edges {{ node {{ id name description parent {{ id }} }} }} \
+                   pageInfo {{ endCursor hasNextPage }} }}"
+            ));
+        }
+        q.push('}');
+
+        let mut vars = serde_json::Map::new();
+        for (i, p) in parents.iter().enumerate() {
+            vars.insert(format!("p{i}"), serde_json::Value::String(p.clone()));
+        }
+
+        let resp: std::collections::HashMap<String, Edges<WebTopic>> = self
+            .query(&q, Some(serde_json::Value::Object(vars)))
+            .await?;
+
+        let mut topics = Vec::new();
+        for (alias, conn) in resp {
+            let truncated = conn.page_info.has_next_page;
+            topics.extend(conn.edges.into_iter().map(|e| Topic::from(e.node)));
+            if truncated {
+                // Rare: >100 children. Re-fetch that parent with pagination.
+                let idx: usize = alias.trim_start_matches('t').parse().unwrap_or(0);
+                if let Some(parent) = parents.get(idx) {
+                    topics.retain(|t| t.parent_topic_id.as_deref() != Some(parent.as_str()));
+                    topics.extend(self.list_topics_level(Some(parent)).await?);
+                }
+            }
+        }
+        Ok(topics)
+    }
+
+    /// Fetch all posts in a topic, including its subtopics.
+    /// `listPosts(topicId:)` only returns posts directly in a topic, so we
+    /// walk the topic tree and collect posts from every descendant.
+    pub async fn get_topic_posts(&self, topic_id: &str) -> anyhow::Result<Vec<Post>> {
+        use std::collections::{HashMap, HashSet};
+
+        let topics = self.list_topics().await?;
+        let mut children: HashMap<&str, Vec<&str>> = HashMap::new();
+        for t in &topics {
+            if let Some(parent) = t.parent_topic_id.as_deref() {
+                children.entry(parent).or_default().push(t.id.as_str());
+            }
+        }
+
+        let mut queue = vec![topic_id.to_string()];
+        let mut subtree = Vec::new();
+        while let Some(id) = queue.pop() {
+            if let Some(kids) = children.get(id.as_str()) {
+                queue.extend(kids.iter().map(|s| s.to_string()));
+            }
+            subtree.push(id);
+        }
+
+        let mut seen = HashSet::new();
+        let mut posts = Vec::new();
+        for id in &subtree {
+            let mut cursor: Option<String> = None;
+            loop {
+                let (page, next) = self.list_posts_page(Some(id), cursor.as_deref()).await?;
+                for p in page {
+                    if seen.insert(p.id.clone()) {
+                        posts.push(p);
+                    }
+                }
+                match next {
+                    Some(c) => cursor = Some(c),
+                    None => break,
+                }
+            }
+        }
+        Ok(posts)
+    }
+
+    pub async fn list_all_posts(
+        &self,
+        cursor: Option<&str>,
+    ) -> anyhow::Result<(Vec<Post>, Option<String>)> {
+        self.list_posts_page(None, cursor).await
+    }
+
+    async fn list_posts_page(
+        &self,
+        topic_id: Option<&str>,
+        cursor: Option<&str>,
+    ) -> anyhow::Result<(Vec<Post>, Option<String>)> {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Resp {
+            list_posts: Edges<WebPost>,
+        }
+        let q = format!(
+            r#"query ListPosts($topicId: ID, $cursor: String) {{
+                listPosts(first: 50, after: $cursor, topicId: $topicId) {{
+                    edges {{ node {{ {POST_FIELDS} }} }}
+                    pageInfo {{ endCursor hasNextPage }}
+                }}
+            }}"#
+        );
+        let vars = serde_json::json!({ "topicId": topic_id, "cursor": cursor });
+        let resp: Resp = self.query(&q, Some(vars)).await?;
+        let posts: Vec<Post> = resp
+            .list_posts
+            .edges
+            .into_iter()
+            .map(|e| e.node.into())
+            .collect();
+        let next = if resp.list_posts.page_info.has_next_page {
+            resp.list_posts.page_info.end_cursor
+        } else {
+            None
+        };
+        Ok((posts, next))
     }
 
     pub async fn search_posts(
@@ -152,78 +402,53 @@ impl SlabClient {
         cursor: Option<&str>,
     ) -> anyhow::Result<(Vec<SearchResult>, Option<String>)> {
         #[derive(Deserialize)]
-        #[serde(rename_all = "camelCase")]
         struct Resp {
-            search: SearchConnection,
+            search: Edges<SearchNode>,
         }
         #[derive(Deserialize)]
-        #[serde(rename_all = "camelCase")]
-        struct SearchConnection {
-            results: Vec<SearchResult>,
-            next_cursor: Option<String>,
+        struct SearchNode {
+            post: Option<WebPost>,
+            highlight: Option<serde_json::Value>,
         }
-        let q = r#"
-            query SearchPosts($query: String!, $cursor: String) {
-                search(query: $query, after: $cursor) {
-                    results {
-                        post {
-                            id
-                            title
-                            content
-                            insertedAt
-                            updatedAt
-                            version
-                            topics { id name }
-                        }
-                        highlight
-                    }
-                    nextCursor
-                }
-            }
-        "#;
-        let vars = serde_json::json!({
-            "query": query_str,
-            "cursor": cursor,
-        });
-        let resp: Resp = self.query(q, Some(vars)).await?;
-        Ok((resp.search.results, resp.search.next_cursor))
+        let q = format!(
+            r#"query SearchPosts($query: String!, $cursor: String) {{
+                search(query: $query, first: 30, after: $cursor) {{
+                    edges {{
+                        node {{
+                            ... on PostSearchResult {{
+                                highlight
+                                post {{ {POST_FIELDS} }}
+                            }}
+                        }}
+                    }}
+                    pageInfo {{ endCursor hasNextPage }}
+                }}
+            }}"#
+        );
+        let vars = serde_json::json!({ "query": query_str, "cursor": cursor });
+        let resp: Resp = self.query(&q, Some(vars)).await?;
+        let results: Vec<SearchResult> = resp
+            .search
+            .edges
+            .into_iter()
+            .filter_map(|e| {
+                let post = e.node.post?;
+                Some(SearchResult {
+                    post: post.into(),
+                    highlight: e.node.highlight.as_ref().map(json_to_text),
+                })
+            })
+            .collect();
+        let next = if resp.search.page_info.has_next_page {
+            resp.search.page_info.end_cursor
+        } else {
+            None
+        };
+        Ok((results, next))
     }
 
-    pub async fn list_all_posts(
-        &self,
-        cursor: Option<&str>,
-    ) -> anyhow::Result<(Vec<Post>, Option<String>)> {
-        #[derive(Deserialize)]
-        struct Resp {
-            organization: OrgPosts,
-        }
-        #[derive(Deserialize)]
-        #[serde(rename_all = "camelCase")]
-        struct OrgPosts {
-            posts: Vec<Post>,
-            next_cursor: Option<String>,
-        }
-        let q = r#"
-            query ListAllPosts($cursor: String) {
-                organization {
-                    posts(after: $cursor) {
-                        id
-                        title
-                        content
-                        insertedAt
-                        updatedAt
-                        version
-                        topics { id name }
-                    }
-                    nextCursor
-                }
-            }
-        "#;
-        let vars = serde_json::json!({ "cursor": cursor });
-        let resp: Resp = self.query(q, Some(vars)).await?;
-        Ok((resp.organization.posts, resp.organization.next_cursor))
-    }
-
+    /// Update a post's content. Fetches the current version and text first
+    /// to compute the OT consistency checksum the server requires.
     pub async fn update_post_content(
         &self,
         id: &str,
@@ -232,27 +457,27 @@ impl SlabClient {
         #[derive(Deserialize)]
         #[serde(rename_all = "camelCase")]
         struct Resp {
-            update_post_content: Post,
+            update_post_content: WebPost,
         }
-        let q = r#"
-            mutation UpdatePostContent($id: ID!, $content: JSON!) {
-                updatePostContent(postId: $id, content: $content) {
-                    id
-                    title
-                    content
-                    insertedAt
-                    updatedAt
-                    version
-                    topics { id name }
-                }
-            }
-        "#;
+        let current = self.get_post(id).await?;
+        let version = current.version.context("post has no content version")?;
+        let checksum = current.checksum();
+
+        let q = format!(
+            r#"mutation UpdatePostContent($id: ID!, $delta: Json!, $version: Int!, $checksum: Int!) {{
+                updatePostContent(id: $id, delta: $delta, version: $version, checksum: $checksum) {{
+                    {POST_FIELDS}
+                }}
+            }}"#
+        );
         let vars = serde_json::json!({
             "id": id,
-            "content": content,
+            "delta": content,
+            "version": version,
+            "checksum": checksum,
         });
-        let resp: Resp = self.query(q, Some(vars)).await?;
-        Ok(resp.update_post_content)
+        let resp: Resp = self.query(&q, Some(vars)).await?;
+        Ok(resp.update_post_content.into())
     }
 
     pub async fn create_post(
@@ -264,35 +489,31 @@ impl SlabClient {
         #[derive(Deserialize)]
         #[serde(rename_all = "camelCase")]
         struct Resp {
-            sync_post: Post,
+            create_post: WebPost,
         }
-        let q = r#"
-            mutation SyncPost($title: String!, $content: JSON!, $externalId: ID!, $topicId: ID) {
-                syncPost(
-                    title: $title,
-                    content: $content,
-                    externalId: $externalId,
-                    topicId: $topicId
-                ) {
-                    id
-                    title
-                    content
-                    insertedAt
-                    updatedAt
-                    version
-                    topics { id name }
-                }
-            }
-        "#;
-        let external_id = format!("slab-cli-{}", uuid_v4_simple());
+        let q = format!(
+            r#"mutation CreatePost($title: String, $content: Json, $topicId: ID) {{
+                createPost(title: $title, content: $content, topicId: $topicId) {{
+                    {POST_FIELDS}
+                }}
+            }}"#
+        );
         let vars = serde_json::json!({
             "title": title,
             "content": content,
-            "externalId": external_id,
             "topicId": topic_id,
         });
-        let resp: Resp = self.query(q, Some(vars)).await?;
-        Ok(resp.sync_post)
+        let resp: Resp = self.query(&q, Some(vars)).await?;
+        Ok(resp.create_post.into())
+    }
+
+    /// Verify the configured token by querying the current session.
+    pub async fn verify_auth(&self) -> anyhow::Result<()> {
+        let _: serde_json::Value = self
+            .query("query VerifyAuth { currentUser { hasPassword } }", None)
+            .await
+            .context("token rejected by Slab — check SLAB_API_TOKEN")?;
+        Ok(())
     }
 
     pub async fn get_post_threads(&self, post_id: &str) -> anyhow::Result<PostThreads> {
@@ -478,24 +699,30 @@ impl SlabClient {
         struct Resp {
             organization: Organization,
         }
-        let q = r#"
-            query GetOrganization {
-                organization {
-                    id
-                    host
+        if self.is_public_api() {
+            let q = r#"
+                query GetOrganization {
+                    organization {
+                        id
+                        host
+                    }
                 }
-            }
-        "#;
-        let resp: Resp = self.query(q, None).await?;
-        Ok(resp.organization)
+            "#;
+            let resp: Resp = self.query(q, None).await?;
+            Ok(resp.organization)
+        } else {
+            // The team web endpoint requires the org host as an argument.
+            let q = r#"
+                query GetOrganization($host: String!) {
+                    organization(host: $host) {
+                        id
+                        host
+                    }
+                }
+            "#;
+            let vars = serde_json::json!({ "host": format!("{}.slab.com", self.team) });
+            let resp: Resp = self.query(q, Some(vars)).await?;
+            Ok(resp.organization)
+        }
     }
-}
-
-fn uuid_v4_simple() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
-    format!("{nanos:032x}")
 }

@@ -5,11 +5,29 @@ use serde::{Deserialize, Serialize};
 pub struct Post {
     pub id: String,
     pub title: String,
+    /// Quill Delta ops (JSON).
     pub content: Option<serde_json::Value>,
+    /// Server-rendered markdown of the post content.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub markdown: Option<String>,
+    /// Plain text of the post content (used for OT checksum).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
     pub inserted_at: Option<String>,
     pub updated_at: Option<String>,
     pub version: Option<i64>,
     pub topics: Option<Vec<TopicRef>>,
+}
+
+impl Post {
+    /// OT checksum as computed by Slab's web client: the UTF-16 length of
+    /// the document text (JavaScript string length semantics).
+    pub fn checksum(&self) -> i64 {
+        self.text
+            .as_deref()
+            .map(|t| t.encode_utf16().count() as i64)
+            .unwrap_or(0)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

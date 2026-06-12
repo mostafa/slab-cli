@@ -68,17 +68,10 @@ pub async fn add(
 ) -> anyhow::Result<()> {
     let client = ctx.client()?;
 
-    // Fetch post to get version and compute checksum
+    // Fetch post to get the content version and OT checksum
     let post = client.get_post(post_id).await?;
     let version = post.version.unwrap_or(1);
-
-    // Compute a simple checksum from the content length (mirrors Slab's client behavior)
-    let content_str = post
-        .content
-        .as_ref()
-        .map(|c| c.to_string())
-        .unwrap_or_default();
-    let checksum = content_str.len() as i64 % 256;
+    let checksum = post.checksum();
 
     let delta_content = format!(
         "[{{\"insert\":\"{}\\n\"}}]",
