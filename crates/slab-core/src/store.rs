@@ -99,6 +99,34 @@ impl StateDb {
         }
     }
 
+    /// Find a post other than `not_slab_id` that occupies `path`.
+    pub fn get_other_by_path(
+        &self,
+        path: &str,
+        not_slab_id: &str,
+    ) -> anyhow::Result<Option<PostState>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT slab_id, path, title, remote_updated_at, remote_content_hash, local_content_hash, version
+             FROM posts WHERE path = ?1 AND slab_id != ?2",
+        )?;
+        let mut rows = stmt.query_map(params![path, not_slab_id], |row| {
+            Ok(PostState {
+                slab_id: row.get(0)?,
+                path: row.get(1)?,
+                title: row.get(2)?,
+                remote_updated_at: row.get(3)?,
+                remote_content_hash: row.get(4)?,
+                local_content_hash: row.get(5)?,
+                version: row.get(6)?,
+            })
+        })?;
+        match rows.next() {
+            Some(Ok(state)) => Ok(Some(state)),
+            Some(Err(e)) => Err(e.into()),
+            None => Ok(None),
+        }
+    }
+
     pub fn list_all(&self) -> anyhow::Result<Vec<PostState>> {
         let mut stmt = self.conn.prepare(
             "SELECT slab_id, path, title, remote_updated_at, remote_content_hash, local_content_hash, version

@@ -128,9 +128,20 @@ impl Vault {
                     })
                     .unwrap_or_else(|| "Uncategorized".to_string());
                 let filename = sanitize_filename(&post.title);
-                PathBuf::from("Topics")
-                    .join(topic_dir)
-                    .join(format!("{filename}.md"))
+                let dir = PathBuf::from("Topics").join(topic_dir);
+                let candidate = dir.join(format!("{filename}.md"));
+
+                // Same-titled posts collide on one path; suffix with the
+                // post id when another post already owns it.
+                let taken_by_other = self
+                    .db
+                    .get_other_by_path(&candidate.to_string_lossy(), &post.id)?
+                    .is_some();
+                if taken_by_other {
+                    dir.join(format!("{filename}-{}.md", post.id))
+                } else {
+                    candidate
+                }
             }
         };
 
