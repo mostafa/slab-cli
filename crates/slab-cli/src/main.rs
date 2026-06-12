@@ -126,7 +126,16 @@ enum Command {
         topic: Option<String>,
     },
     /// Show vault tree
-    Tree,
+    Tree {
+        /// Subdirectory to show (relative to vault root)
+        path: Option<String>,
+        /// Show only directories
+        #[arg(long)]
+        dirs: bool,
+        /// Limit depth (1 = top level only)
+        #[arg(long)]
+        depth: Option<usize>,
+    },
     /// Pull posts from Slab to local vault
     Pull {
         /// Pull only a specific topic
@@ -324,7 +333,9 @@ fn run(ctx: cmd::Context, command: Command) -> anyhow::Result<()> {
             }
         }
         Command::Ls { topic } => rt.block_on(cmd::post::list(&ctx, topic.as_deref())),
-        Command::Tree => cmd::tree::run(&ctx),
+        Command::Tree { path, dirs, depth } => {
+            cmd::tree::run(&ctx, &cmd::tree::TreeOptions { path, dirs, depth })
+        }
         Command::Pull { topic, post, all } => rt.block_on(cmd::sync::pull(
             &ctx,
             topic.as_deref(),

@@ -56,7 +56,7 @@ slab push --all
 | `slab search <query>` | Search local vault (grep-style) |
 | `slab search <query> --remote` | Search via Slab API |
 | `slab ls` | Alias for `post:list` |
-| `slab tree` | Show vault directory tree |
+| `slab tree [path] [--dirs] [--depth=N]` | Show vault directory tree |
 | `slab pull [--all\|--topic=\|--post=]` | Pull posts from Slab |
 | `slab status` | Show modified/added/deleted files |
 | `slab diff [file]` | Show local changes |

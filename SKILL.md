@@ -113,7 +113,9 @@ slab backlinks Topics/Eng/my-rfc.md # incoming links
 ### Utilities
 
 ```bash
-slab tree                            # show vault directory tree
+slab tree                            # show vault directory tree (large!)
+slab tree --dirs --depth 2           # top-level topic overview
+slab tree "Topics/Engineering"       # show one subtree
 slab open POST_ID                    # open in browser
 slab completions bash                # shell completions
 slab api 'QUERY' [--variables JSON]  # raw GraphQL escape hatch (use - for stdin)

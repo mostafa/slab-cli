@@ -1,25 +1,52 @@
 use super::Context;
 
-pub fn run(ctx: &Context) -> anyhow::Result<()> {
-    let cfg = ctx.config()?;
-    let vault_path = &cfg.vault_path;
+pub struct TreeOptions {
+    /// Subdirectory of the vault to show (relative path).
+    pub path: Option<String>,
+    /// Show only directories.
+    pub dirs: bool,
+    /// Limit recursion depth (1 = direct children only).
+    pub depth: Option<usize>,
+}
 
-    if !vault_path.exists() {
-        anyhow::bail!("vault not found at {}", vault_path.display());
+pub fn run(ctx: &Context, opts: &TreeOptions) -> anyhow::Result<()> {
+    let cfg = ctx.config()?;
+    let root = match &opts.path {
+        Some(p) => cfg.vault_path.join(p),
+        None => cfg.vault_path.clone(),
+    };
+
+    if !root.exists() {
+        anyhow::bail!("path not found: {}", root.display());
     }
 
-    println!("{}/", vault_path.display());
-    print_tree(vault_path, "", true)?;
+    println!("{}/", root.display());
+    print_tree(&root, "", true, opts, 0)?;
     Ok(())
 }
 
-fn print_tree(dir: &std::path::Path, prefix: &str, is_root: bool) -> anyhow::Result<()> {
+fn print_tree(
+    dir: &std::path::Path,
+    prefix: &str,
+    is_root: bool,
+    opts: &TreeOptions,
+    level: usize,
+) -> anyhow::Result<()> {
+    if let Some(max) = opts.depth
+        && level >= max
+    {
+        return Ok(());
+    }
+
     let mut entries: Vec<_> = std::fs::read_dir(dir)?
         .filter_map(|e| e.ok())
         .filter(|e| {
             let name = e.file_name();
             let name_str = name.to_string_lossy();
-            !name_str.starts_with('.')
+            if name_str.starts_with('.') {
+                return false;
+            }
+            !opts.dirs || e.file_type().map(|t| t.is_dir()).unwrap_or(false)
         })
         .collect();
 
@@ -50,7 +77,7 @@ fn print_tree(dir: &std::path::Path, prefix: &str, is_root: bool) -> anyhow::Res
             } else {
                 format!("{prefix}│   ")
             };
-            print_tree(&entry.path(), &child_prefix, false)?;
+            print_tree(&entry.path(), &child_prefix, false, opts, level + 1)?;
         } else {
             println!("{prefix}{connector}{}", name.to_string_lossy());
         }
