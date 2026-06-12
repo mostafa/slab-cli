@@ -30,30 +30,22 @@ fn init(
     team: Option<String>,
     path: Option<std::path::PathBuf>,
 ) -> anyhow::Result<()> {
-    let team = team
-        .or_else(|| ctx.team.clone())
-        .or_else(|| std::env::var("SLAB_TEAM").ok())
-        .context("--team is required")?;
-    let token = ctx
-        .token
-        .clone()
-        .or_else(|| std::env::var("SLAB_API_TOKEN").ok())
-        .context("--token or SLAB_API_TOKEN is required")?;
+    let path = path.or_else(|| ctx.vault.clone());
 
-    let vault_path = path
-        .or_else(|| ctx.vault.clone())
-        .unwrap_or_else(|| slab_core::config::default_vault_root().join(&team));
+    // Resolve from saved config (auth login), env vars, or explicit flags.
+    let mut config = slab_core::Config::resolve(
+        team.or_else(|| ctx.team.clone()),
+        ctx.token.clone(),
+        path.clone(),
+    )
+    .context("no saved config found — run `slab auth login` or pass --team with SLAB_API_TOKEN")?;
 
-    let config = slab_core::Config {
-        team,
-        token,
-        endpoint: std::env::var("SLAB_ENDPOINT")
-            .unwrap_or_else(|_| "https://api.slab.com/v1/graphql".into()),
-        vault_path: vault_path.clone(),
-    };
+    if let Some(p) = path {
+        config.vault_path = p;
+    }
 
     slab_core::vault::Vault::init(&config)?;
-    println!("vault initialized at {}", vault_path.display());
+    println!("vault initialized at {}", config.vault_path.display());
     Ok(())
 }
 

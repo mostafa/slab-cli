@@ -32,6 +32,7 @@ fn login(ctx: &Context, token: Option<String>, team: Option<String>) -> anyhow::
     let team = team
         .or_else(|| ctx.team.clone())
         .or_else(|| std::env::var("SLAB_TEAM").ok())
+        .or_else(slab_core::config::default_team)
         .context("--team is required for login")?;
 
     let token = token
@@ -39,18 +40,9 @@ fn login(ctx: &Context, token: Option<String>, team: Option<String>) -> anyhow::
         .or_else(|| std::env::var("SLAB_API_TOKEN").ok())
         .context("--token is required for login")?;
 
-    let vault_path = ctx
-        .vault
-        .clone()
-        .unwrap_or_else(|| slab_core::config::default_vault_root().join(&team));
-
-    let config = slab_core::Config {
-        team: team.clone(),
-        token,
-        endpoint: std::env::var("SLAB_ENDPOINT")
-            .unwrap_or_else(|_| "https://api.slab.com/v1/graphql".into()),
-        vault_path,
-    };
+    // Reuse a saved config (preserves vault path / endpoint overrides),
+    // falling back to a fresh one for first-time logins.
+    let config = slab_core::Config::resolve(Some(team.clone()), Some(token), ctx.vault.clone())?;
 
     // Verify connection
     let rt = tokio::runtime::Builder::new_current_thread()
@@ -58,6 +50,7 @@ fn login(ctx: &Context, token: Option<String>, team: Option<String>) -> anyhow::
         .build()?;
 
     let client = slab_core::api::SlabClient::new(&config)?;
+    rt.block_on(client.verify_auth())?;
     let org = rt.block_on(client.get_organization())?;
     println!("authenticated to {} ({})", org.host, team);
 
