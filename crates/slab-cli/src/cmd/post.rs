@@ -80,8 +80,15 @@ pub async fn update(
     let md_content = read_content_source(content_file)?;
     let delta = slab_core::delta::markdown_to_delta(&md_content);
 
-    let post = client.update_post_content(&clean_id, &delta).await?;
-    println!("updated post: {} (id: {})", post.title, post.id);
+    let (post, applied) = client.update_post_content(&clean_id, &delta).await?;
+    if applied {
+        println!("updated post: {} (id: {})", post.title, post.id);
+    } else {
+        println!(
+            "update submitted for {} (id: {}) — Slab applies edits asynchronously; verify with `slab post:get` shortly",
+            post.title, post.id
+        );
+    }
     Ok(())
 }
 

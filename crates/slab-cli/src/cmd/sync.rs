@@ -255,11 +255,17 @@ pub async fn push(
                     continue;
                 }
 
-                let updated = client.update_post_content(&state.slab_id, &delta).await?;
-                println!("pushed: {path} -> {}", updated.id);
-
-                // Refresh local state (keeps the file at its current path)
-                vault.write_post(&updated, None)?;
+                let (updated, applied) = client.update_post_content(&state.slab_id, &delta).await?;
+                if applied {
+                    println!("pushed: {path} -> {}", updated.id);
+                    // Refresh local state (keeps the file at its current path)
+                    vault.write_post(&updated, None)?;
+                } else {
+                    println!(
+                        "pushed (pending): {path} -> {} — Slab applies edits asynchronously; run `slab pull --post {}` later to sync state",
+                        updated.id, updated.id
+                    );
+                }
             }
             FileStatus::Added => {
                 let content = std::fs::read_to_string(&abs_path)?;
@@ -273,9 +279,16 @@ pub async fn push(
                         println!("would push: {path} -> {id}");
                         continue;
                     }
-                    let updated = client.update_post_content(&id, &delta).await?;
-                    println!("pushed: {path} -> {}", updated.id);
-                    vault.write_post(&updated, None)?;
+                    let (updated, applied) = client.update_post_content(&id, &delta).await?;
+                    if applied {
+                        println!("pushed: {path} -> {}", updated.id);
+                        vault.write_post(&updated, None)?;
+                    } else {
+                        println!(
+                            "pushed (pending): {path} -> {} — Slab applies edits asynchronously",
+                            updated.id
+                        );
+                    }
                 } else {
                     // New post
                     let title = std::path::Path::new(path)

@@ -33,7 +33,12 @@ struct WebContent {
 impl From<WebPost> for Post {
     fn from(p: WebPost) -> Self {
         let (delta, markdown, text, version) = match p.content {
-            Some(c) => (c.delta, c.markdown, c.text, c.version),
+            Some(c) => (
+                c.delta.map(parse_json_scalar),
+                c.markdown,
+                c.text,
+                c.version,
+            ),
             None => (None, None, None, None),
         };
         Post {
@@ -93,6 +98,24 @@ struct Edge<N> {
 struct PageInfo {
     end_cursor: Option<String>,
     has_next_page: bool,
+}
+
+/// Serialize Delta content for the server's Json scalar convention:
+/// a bare ops array encoded as a JSON string.
+fn delta_to_scalar(content: &serde_json::Value) -> String {
+    let ops = content.get("ops").unwrap_or(content);
+    serde_json::to_string(ops).unwrap_or_default()
+}
+
+/// Json scalars often arrive as strings of serialized JSON; parse them.
+fn parse_json_scalar(v: serde_json::Value) -> serde_json::Value {
+    match &v {
+        serde_json::Value::String(s) => match serde_json::from_str(s) {
+            Ok(inner @ (serde_json::Value::Array(_) | serde_json::Value::Object(_))) => inner,
+            _ => v,
+        },
+        _ => v,
+    }
 }
 
 /// Flatten a Json value (Quill Delta or plain string) into readable text.
@@ -447,21 +470,39 @@ impl SlabClient {
         Ok((results, next))
     }
 
-    /// Update a post's content. Fetches the current version and text first
-    /// to compute the OT consistency checksum the server requires.
+    /// Replace a post's content. Builds an OT change delta (insert new
+    /// document, delete the old one) against the current version, as
+    /// documented at https://studio.apollographql.com/public/Slab.
+    ///
+    /// The web endpoint applies edits asynchronously (they flush within a
+    /// few minutes). Returns the latest post state and whether the change
+    /// was already visible.
     pub async fn update_post_content(
         &self,
         id: &str,
         content: &serde_json::Value,
-    ) -> anyhow::Result<Post> {
+    ) -> anyhow::Result<(Post, bool)> {
         #[derive(Deserialize)]
         #[serde(rename_all = "camelCase")]
         struct Resp {
+            #[allow(dead_code)]
             update_post_content: WebPost,
         }
         let current = self.get_post(id).await?;
         let version = current.version.context("post has no content version")?;
         let checksum = current.checksum();
+
+        // Replace-style OT delta: insert the new document, delete the old.
+        let mut ops: Vec<serde_json::Value> = content
+            .get("ops")
+            .and_then(|o| o.as_array())
+            .or_else(|| content.as_array())
+            .cloned()
+            .unwrap_or_default();
+        if checksum > 0 {
+            ops.push(serde_json::json!({ "delete": checksum }));
+        }
+        let delta = serde_json::json!({ "ops": ops });
 
         let q = format!(
             r#"mutation UpdatePostContent($id: ID!, $delta: Json!, $version: Int!, $checksum: Int!) {{
@@ -472,12 +513,21 @@ impl SlabClient {
         );
         let vars = serde_json::json!({
             "id": id,
-            "delta": content,
+            "delta": delta.to_string(),
             "version": version,
             "checksum": checksum,
         });
-        let resp: Resp = self.query(&q, Some(vars)).await?;
-        Ok(resp.update_post_content.into())
+        let _resp: Resp = self.query(&q, Some(vars)).await?;
+
+        // Poll briefly in case the edit flushes quickly.
+        for _ in 0..5 {
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            let latest = self.get_post(id).await?;
+            if latest.version != Some(version) {
+                return Ok((latest, true));
+            }
+        }
+        Ok((current, false))
     }
 
     pub async fn create_post(
@@ -500,7 +550,7 @@ impl SlabClient {
         );
         let vars = serde_json::json!({
             "title": title,
-            "content": content,
+            "content": delta_to_scalar(content),
             "topicId": topic_id,
         });
         let resp: Resp = self.query(&q, Some(vars)).await?;
@@ -546,6 +596,7 @@ impl SlabClient {
         Ok(resp.post)
     }
 
+    /// Start a new comment thread on a post. Returns (thread_id, comment_id).
     pub async fn create_comment(
         &self,
         post_id: &str,
@@ -554,11 +605,16 @@ impl SlabClient {
         version: i64,
         checksum: i64,
         mark: &serde_json::Value,
-    ) -> anyhow::Result<CreatedComment> {
+    ) -> anyhow::Result<(String, String)> {
+        #[derive(Deserialize)]
+        struct Thread {
+            id: String,
+            comments: Option<Vec<CreatedComment>>,
+        }
         #[derive(Deserialize)]
         #[serde(rename_all = "camelCase")]
         struct Resp {
-            create_comment: CreatedComment,
+            create_comment: Thread,
         }
         let q = r#"
             mutation CreateComment(
@@ -578,7 +634,7 @@ impl SlabClient {
                     mark: $mark,
                     content: $content,
                     notifyGroups: $notifyGroups
-                ) { id }
+                ) { id comments { id } }
             }
         "#;
         let vars = serde_json::json!({
@@ -586,12 +642,42 @@ impl SlabClient {
             "id": post_id,
             "version": version,
             "checksum": checksum,
-            "mark": mark,
+            // Json scalar convention: serialized string, not an object
+            "mark": mark.to_string(),
             "content": content,
             "notifyGroups": true,
         });
         let resp: Resp = self.query(q, Some(vars)).await?;
-        Ok(resp.create_comment)
+        let comment_id = resp
+            .create_comment
+            .comments
+            .and_then(|c| c.into_iter().next_back())
+            .map(|c| c.id)
+            .unwrap_or_default();
+        Ok((resp.create_comment.id, comment_id))
+    }
+
+    /// Reply to an existing comment thread. Returns the new comment id.
+    pub async fn add_comment(&self, thread_id: &str, content: &str) -> anyhow::Result<String> {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Resp {
+            add_comment: CreatedComment,
+        }
+        let q = r#"
+            mutation AddComment($threadId: ID!, $content: String!, $notifyGroups: Boolean!) {
+                addComment(threadId: $threadId, content: $content, notifyGroups: $notifyGroups) {
+                    id
+                }
+            }
+        "#;
+        let vars = serde_json::json!({
+            "threadId": thread_id,
+            "content": content,
+            "notifyGroups": true,
+        });
+        let resp: Resp = self.query(q, Some(vars)).await?;
+        Ok(resp.add_comment.id)
     }
 
     pub async fn update_comment(&self, comment_id: &str, content: &str) -> anyhow::Result<Comment> {

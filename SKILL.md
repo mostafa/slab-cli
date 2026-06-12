@@ -204,6 +204,14 @@ slab comment:add POST_ID "Addressed in latest edit" --thread THREAD_ID
 slab comment:resolve THREAD_ID
 ```
 
+## Asynchronous Writes
+
+Slab applies content edits (`post:update`, `push`) **asynchronously** — the
+server queues the change and flushes it after the document goes idle (can take
+a few minutes). The CLI polls briefly and reports "pending" if the edit hasn't
+landed yet; verify later with `slab post:get` or `slab pull --post ID`.
+Comments, reactions, threads, and `post:create` apply immediately.
+
 ## Key Conventions
 
 - Always use `--json` when parsing output programmatically.

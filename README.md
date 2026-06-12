@@ -151,6 +151,14 @@ slab comment:react k4vjdkoz "👍"
 slab comment:resolve plco0ho0
 ```
 
+## Asynchronous writes
+
+Slab applies content edits (`post:update`, `push`) asynchronously — changes
+flush after the document goes idle, which can take a few minutes. The CLI
+reports "pending" when an edit hasn't landed yet; verify with `slab post:get`
+or `slab pull --post ID`. Comments, reactions, and post creation apply
+immediately.
+
 ## Endpoints & tokens
 
 By default the CLI talks to your team's web GraphQL endpoint
